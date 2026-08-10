@@ -117,15 +117,39 @@ test_metacognition.py    # meta-cognitive verification
 test_engineering.py      # engineering primitives verification
 ```
 
+## Dogfooding (autological + engineering)
+
+The framework does not just describe good practice — it **uses it**:
+
+- `patterns.py` imports `engineering.py` and applies `with_retry`,
+  `ContextWindow`, `Guardrails`, and `self_verify` inside `react`,
+  `orchestrate`, `evaluate_optimize`, and `reflect`.
+- `react` now uses a **bounded** `ContextWindow` instead of an unbounded
+  scratchpad (the memory-growth anti-pattern we hit and fixed).
+- `evaluate_optimize` runs a `self_verify` gate on the final draft.
+- `meta.py` applies the patterns to the harness's own code (`self_review`,
+  `contract_audit`, `doc_sync`, `route_own_issue`).
+
+## Self-Testing CI
+
+`.github/workflows/harness-self-test.yml` runs **all four suites** on every
+push/PR using the repo's `AZURE_FOUNDRY_*` secrets:
+
+- 9/9 base pattern harness (live)
+- autological loop
+- 4/4 meta-cognitive
+- 9/9 engineering primitives
+- 5/5 pattern↔engineering integration
+
 ## Verification
 
-Latest real executions: **31/31 checks PASS**
+Latest real executions: **36/36 checks PASS**
 
 - Base pattern harness: **9/9**
 - Autological loop: **closed**, contract audit **197/197**, drift **0**
 - Meta-cognitive layer: **4/4**
-- Engineering primitives: **9/9** (semantic route picked `technical` for a 503
-  over `billing`/`greeting` via live embeddings)
+- Engineering primitives: **9/9**
+- Pattern↔engineering integration: **5/5**
 
 ---
 
