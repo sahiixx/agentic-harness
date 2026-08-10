@@ -22,6 +22,32 @@ from typing import Callable, Iterable, Any
 
 LLM = Callable[..., str]
 
+# Engineering primitives (context, retry, guardrails, verification). Importing
+# them here makes the patterns dogfood their own engineering layer — every
+# pattern enforces the guardrail/context/self-verify rules it advertises.
+try:
+    from engineering import (
+        with_retry, ContextWindow, Guardrails, self_verify, TransientError)
+    _HAS_ENGINEERING = True
+except Exception:  # harness usable standalone too
+    _HAS_ENGINEERING = False
+
+    def with_retry(fn, **_):  # type: ignore
+        return fn
+
+    class ContextWindow:  # type: ignore
+        def __init__(self, **_):
+            self._t = []
+
+        def add(self, x):
+            self._t.append(x)
+
+        def render(self):
+            return '\n'.join(self._t)
+
+        def __len__(self):
+            return len(self._t)
+
 
 class Budget(Exception):
     """Raised when an execution envelope is exhausted."""
@@ -120,8 +146,9 @@ def orchestrate(llm: LLM, task: str, worker: Callable[[str], str],
     Use when subtasks CANNOT be predicted upfront. Otherwise use chain/parallel.
     """
     env = env or Envelope()
-    plan_raw = llm('Decompose the task into 2-6 independent subtasks. '
-                   'Return a JSON array of strings, nothing else.\n\nTASK:\n' + task)
+    call = with_retry(llm) if _HAS_ENGINEERING else llm
+    plan_raw = call('Decompose the task into 2-6 independent subtasks. '
+                    'Return a JSON array of strings, nothing else.\n\nTASK:\n' + task)
     try:
         subtasks = json.loads(plan_raw[plan_raw.index('['):plan_raw.rindex(']') + 1])
     except Exception:
@@ -145,10 +172,12 @@ def evaluate_optimize(llm: LLM, task: str, rubric: str,
     """
     env = env or Envelope()
     judge = judge or llm
-    draft = llm(task)
+    call = with_retry(llm) if _HAS_ENGINEERING else llm
+    jcall = with_retry(judge) if _HAS_ENGINEERING else judge
+    draft = call(task)
     for i in range(env.max_iters):
         env.tick(i)
-        verdict = judge(f'Score the OUTPUT against the RUBRIC.\n'
+        verdict = jcall(f'Score the OUTPUT against the RUBRIC.\n'
                         f'Reply exactly "PASS" if every criterion is met, '
                         f'otherwise list the specific failures.\n\n'
                         f'RUBRIC:\n{rubric}\n\nOUTPUT:\n{draft}')
@@ -156,53 +185,83 @@ def evaluate_optimize(llm: LLM, task: str, rubric: str,
                       {'pass': verdict.strip().upper().startswith('PASS')})
         if verdict.strip().upper().startswith('PASS'):
             return {'output': draft, 'rounds': i + 1, 'passed': True}
-        draft = llm(f'Revise the OUTPUT to fix the CRITIQUE.\n\n'
-                    f'TASK:\n{task}\n\nCRITIQUE:\n{verdict}\n\nOUTPUT:\n{draft}')
+        draft = call(f'Revise the OUTPUT to fix the CRITIQUE.\n\n'
+                     f'TASK:\n{task}\n\nCRITIQUE:\n{verdict}\n\nOUTPUT:\n{draft}')
+    # Final self_verify gate if criteria can be derived from the rubric lines
+    if _HAS_ENGINEERING and rubric:
+        passed, fails = self_verify(call, draft,
+                                    [l.strip('- ').strip() for l in rubric.splitlines()
+                                     if l.strip() and not l.strip().startswith('#')])
+        env.trace.add('eval_opt', 'self_verify', {'passed': passed, 'fails': fails})
     return {'output': draft, 'rounds': env.max_iters, 'passed': False}
 
 
 def react(llm: LLM, goal: str, tools: dict[str, Callable[[str], str]],
-          env: Envelope | None = None) -> str:
-    """ReAct — interleaved reason -> act -> observe, adapting to real results."""
+          env: Envelope | None = None,
+          guardrails: 'Guardrails | None' = None) -> str:
+    """ReAct — interleaved reason -> act -> observe, adapting to real results.
+
+    Upgraded to use the engineering layer:
+      * bounded `ContextWindow` instead of an unbounded scratchpad (the
+        memory-growth anti-pattern we hit earlier)
+      * `with_retry` around each LLM call (resilience to transient Azure 429/529)
+      * optional input/step guardrails
+    """
     env = env or Envelope()
-    scratch = ''
+    ctx = ContextWindow(max_turns=env.max_iters, max_chars=6000)
     names = ', '.join(tools)
+    call = with_retry(llm) if _HAS_ENGINEERING else llm
+
+    def step_prompt(history: str) -> str:
+        return (f'GOAL: {goal}\nTOOLS: {names}\nHistory:\n{history}\n\n'
+                f'Reply with either "ACT <tool> <input>" or "DONE <answer>".')
+
     for i in range(env.max_iters):
         env.tick(i)
-        step = llm(f'GOAL: {goal}\nTOOLS: {names}\n'
-                   f'History:\n{scratch}\n\n'
-                   f'Reply with either "ACT <tool> <input>" or "DONE <answer>".')
-        s = step.strip()
+        s = call(step_prompt(ctx.render())).strip()
         env.trace.add('react', f'step{i}', {'head': s[:40]})
+        if guardrails and not guardrails.check_mid(s):
+            ctx.add(f'\nBLOCKED(mid_guardrail): {s[:80]}')
+            continue
         if s.upper().startswith('DONE'):
             return s[4:].strip()
         if s.upper().startswith('ACT'):
             body = s[3:].strip()
             tool = next((t for t in tools if body.lower().startswith(t.lower())), None)
             if not tool:
-                scratch += f'\nERROR: unknown tool in {body[:60]}'
+                ctx.add(f'\nERROR: unknown tool in {body[:60]}')
                 continue
             arg = body[len(tool):].strip()
             try:
                 obs = tools[tool](arg)
             except Exception as e:
                 obs = f'TOOL ERROR: {e}'
-            scratch += f'\nACT {tool} {arg}\nOBS {str(obs)[:800]}'
+            ctx.add(f'\nACT {tool} {arg}\nOBS {str(obs)[:800]}')
         else:
-            scratch += f'\nMALFORMED: {s[:80]}'
-    return llm(f'Budget exhausted. Give the best answer from:\n{scratch}')
+            ctx.add(f'\nMALFORMED: {s[:80]}')
+    return call(f'Budget exhausted. Give the best answer from:\n{ctx.render()}')
 
 
-def reflect(llm: LLM, task: str, env: Envelope | None = None) -> str:
-    """Reflection — single-model self-critique before emitting the answer."""
+def reflect(llm: LLM, task: str, env: Envelope | None = None,
+            criteria: Iterable[str] | None = None) -> str:
+    """Reflection — single-model self-critique before emitting the answer.
+
+    Upgraded: optional `self_verify` gate — if `criteria` are given, the rewrite
+    is re-checked against them once before returning.
+    """
     env = env or Envelope()
     draft = llm(task)
     crit = llm(f'Critique this answer. List concrete defects only.\n\n'
                f'TASK:\n{task}\n\nANSWER:\n{draft}')
     env.trace.add('reflect', 'critique')
-    return llm(f'Rewrite the answer, fixing every defect.\n\n'
-               f'TASK:\n{task}\n\nDEFECTS:\n{crit}\n\nDRAFT:\n{draft}')
+    out = llm(f'Rewrite the answer, fixing every defect.\n\n'
+              f'TASK:\n{task}\n\nDEFECTS:\n{crit}\n\nDRAFT:\n{draft}')
+    if criteria and _HAS_ENGINEERING:
+        passed, _ = self_verify(llm, out, list(criteria))
+        env.trace.add('reflect', 'self_verify', {'passed': passed})
+    return out
 
 
 __all__ = ['Envelope', 'Budget', 'Trace', 'chain', 'route', 'parallel', 'vote',
-           'orchestrate', 'evaluate_optimize', 'react', 'reflect']
+           'orchestrate', 'evaluate_optimize', 'react', 'reflect',
+           'ContextWindow', 'Guardrails', 'self_verify', 'with_retry']
