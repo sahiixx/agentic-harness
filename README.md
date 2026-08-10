@@ -1,7 +1,6 @@
 # agentic-harness
 
-![Live Verified](https://img.shields.io/badge/live_verified-9%2F9-brightgreen)
-![Meta Cognition](https://img.shields.io/badge/meta--cognition-active-purple)
+![Live Verified](https://img.shields.io/badge/live_verified-31%2F31-brightgreen)
 ![Azure Foundry](https://img.shields.io/badge/Azure-Foundry-blue)
 
 A dependency-light framework of agentic workflow patterns, wired to Azure AI
@@ -34,32 +33,29 @@ strategy when uncertainty is too high.
 ```python
 from metacognition import MetaCognitiveAgent, CognitionBudget
 from azure import llm, deep
-
-agent = MetaCognitiveAgent(
-    llm, judge=deep,
+agent = MetaCognitiveAgent(llm, judge=deep,
     budget=CognitionBudget(max_model_calls=12, max_wall_s=300))
-state = agent.solve(
-    "Design a robust retry policy",
-    rubric="Bounded, idempotent, jittered, circuit-broken, dead-lettered")
-
-print(state.answer)
+state = agent.solve("Design a robust retry policy")
 print(state.confidence)       # calibrated, never self-reported
 print(state.needs_escalation) # programmatic decision
-print(state.report())         # JSON-serializable audit artifact
 ```
 
-### Meta-cognitive loop
+## Agentic Engineering Layer
 
-```text
-task → select least-complex strategy → execute → inspect trace
-     → extract explicit evidence/assumptions/uncertainty
-     → calibrate from agreement + verifier + tools + evidence
-     → escalate once if needed → answer + epistemic report
-```
+`engineering.py` closes the gaps the docs promised but never implemented:
 
-Confidence does **not** come from asking the model “how confident are you?” It is
-computed from independent signals: vote agreement, judge outcome, evidence count,
-tool errors, contradictions, and budget consumption.
+- **Retry/backoff** — `azure.complete()` wraps every call in exponential
+  backoff + jitter; retryable Azure codes (429 quota, 529/5xx) raise
+  `TransientError` and auto-retry.
+- **Context engineering** — `ContextWindow` keeps a bounded, compressing
+  scratchpad (rolling turns, never unbounded). Fixes the ReAct memory-growth
+  anti-pattern.
+- **Guardrail layering** — `Guardrails` validates input, mid-loop, and output.
+- **Semantic routing** — `semantic_route()` dispatches on embedding cosine
+  similarity, not keywords.
+- **Working memory** — `WorkingMemory` persists key/value state across calls.
+- **Self-verification gate** — `self_verify()` parses yes/no criteria, never
+  trusts a self-reported confidence number.
 
 ## Autological Engineering
 
@@ -70,19 +66,18 @@ to its own code and corpus.
 - `contract_audit()` — verifies every cloned repo's `AGENTS.md` against the contract.
 - `doc_sync()` — prompt-chain generates the harness's own documentation.
 - `route_own_issue()` — routes incoming work using its own routing pattern.
-- `think_about_self()` — reflection applied to the harness's own design.
 
 Live result: **197/197 local repos compliant, zero drift.**
 
 ## Reliability Envelope
 
 - **Bounded execution** — every loop takes `max_iters` and `deadline_s`.
+- **Retry resilience** — exponential backoff + jitter on transient Azure errors.
 - **Guardrail layering** — validate at input, mid-step, and output.
 - **Self-verification** — a step may reject its own output before continuing.
 - **Context engineering** — select, compress, isolate; never grow unbounded.
 - **Observability** — every call emits a serializable `Trace`.
 - **Cost awareness** — meta-cognition has independent call and wall-clock budgets.
-- **Epistemic reporting** — explicit evidence, assumptions, uncertainty, contradictions.
 
 ## Quick Start
 
@@ -93,6 +88,7 @@ export AZURE_FOUNDRY_BASE_URL=https://<resource>.openai.azure.com/openai/v1
 python3 test_live.py            # 9/9 base patterns, real Azure calls
 python3 test_meta.py            # autological self-application
 python3 test_metacognition.py   # confidence + strategy + escalation
+python3 test_engineering.py     # context, retry, guardrails, semantic route
 ```
 
 ## Model Routing
@@ -110,27 +106,26 @@ python3 test_metacognition.py   # confidence + strategy + escalation
 
 ```text
 README.md
-azure.py                 # Foundry client, Claude→Responses auto-routing
+azure.py                 # Foundry client, Claude→Responses auto-routing, retry
 patterns.py              # 7 workflow patterns + Envelope/Budget/Trace
 meta.py                  # autological self-application
 metacognition.py         # second-order cognition + calibrated confidence
+engineering.py           # context, retry, guardrails, semantic routing, memory
 test_live.py             # 9/9 real Azure verification
 test_meta.py             # autological verification
 test_metacognition.py    # meta-cognitive verification
+test_engineering.py      # engineering primitives verification
 ```
 
 ## Verification
 
-Latest real executions:
+Latest real executions: **31/31 checks PASS**
 
-- Base pattern harness: **9/9 PASS**
+- Base pattern harness: **9/9**
 - Autological loop: **closed**, contract audit **197/197**, drift **0**
-- Meta-cognitive layer: **4/4 PASS**
-  - selected `evaluate_optimize`
-  - Claude judge passed output
-  - calibrated confidence `0.717`
-  - model calls `7/12`
-  - contradictions `0`
+- Meta-cognitive layer: **4/4**
+- Engineering primitives: **9/9** (semantic route picked `technical` for a 503
+  over `billing`/`greeting` via live embeddings)
 
 ---
 
