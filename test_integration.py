@@ -3,13 +3,11 @@
 Confirms react uses a bounded ContextWindow (not an unbounded scratchpad),
 and that retry/guardrails/self_verify are wired into the pattern functions.
 """
-import os, sys
-sys.path.insert(0, '/opt/data/harness')
-for line in open('/opt/data/.env'):
-    line = line.strip()
-    if '=' in line and not line.startswith('#'):
-        k, v = line.split('=', 1)
-        os.environ.setdefault(k, v)
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT))
 
 import patterns
 from engineering import ContextWindow, Guardrails, with_retry

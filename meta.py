@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import json
 import subprocess
+from pathlib import Path
 from typing import Callable
 
 import azure
@@ -26,6 +27,7 @@ from patterns import (Envelope, chain, route, orchestrate, evaluate_optimize,
 
 LLM = azure.llm          # gpt-5.6-sol
 DEEP = azure.deep        # claude-opus-5 (judge)
+REPO_ROOT = Path(__file__).resolve().parent
 
 CONTRACT = dict(
     deployments=['gpt-5.6-sol', 'claude-opus-5', 'gpt-5', 'text-embedding-3-small'],
@@ -35,7 +37,7 @@ CONTRACT = dict(
               'evaluate_optimize', 'react', 'reflect'])
 
 
-def self_review(path: str = '/opt/data/harness/patterns.py') -> dict:
+def self_review(path: str | os.PathLike[str] = REPO_ROOT / 'patterns.py') -> dict:
     """Evaluator-optimizer: a model generates, Claude judges — on OUR code."""
     src = open(path, errors='ignore').read()
     rubric = (
@@ -47,7 +49,7 @@ def self_review(path: str = '/opt/data/harness/patterns.py') -> dict:
     return evaluate_optimize(LLM, task, rubric, Envelope(max_iters=3), judge=DEEP)
 
 
-def contract_audit(root: str = '/opt/data') -> dict:
+def contract_audit(root: str | os.PathLike[str] = REPO_ROOT.parent) -> dict:
     """Scan all cloned repos; confirm each AGENTS.md names the contract deployments.
 
     This is the harness policing its own distributed contract — autological
@@ -89,7 +91,7 @@ def route_own_issue(text: str) -> str:
     """Route an incoming engineering task to the right handling path."""
     return route(LLM, text, {
         'review': lambda t: 'PATH: run self_review() then open a findings issue',
-        'audit': lambda t: 'PATH: run contract_audit() across /opt/data',
+        'audit': lambda t: 'PATH: run contract_audit() across the configured workspace',
         'doc': lambda t: 'PATH: run doc_sync() and commit the README',
         'deploy': lambda t: 'PATH: re-run test_live.py; if 9/9, push',
     }, Envelope())

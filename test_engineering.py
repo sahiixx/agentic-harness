@@ -1,11 +1,12 @@
 """Live verification of the engineering primitives + retry resilience."""
-import os, sys, json, tempfile
-sys.path.insert(0, os.path.dirname(__file__) or '/opt/data/harness')
-for line in open('/opt/data/.env'):
-    line = line.strip()
-    if '=' in line and not line.startswith('#'):
-        k, v = line.split('=', 1)
-        os.environ.setdefault(k, v)
+import os
+import sys
+import json
+import tempfile
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT))
 
 import azure
 from engineering import (with_retry, Guardrails, ContextWindow, WorkingMemory,

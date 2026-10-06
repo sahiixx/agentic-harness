@@ -132,14 +132,16 @@ The framework does not just describe good practice — it **uses it**:
 
 ## Self-Testing CI
 
-`.github/workflows/harness-self-test.yml` runs **all four suites** on every
-push/PR using the repo's `AZURE_FOUNDRY_*` secrets:
+`.github/workflows/harness-self-test.yml` runs deterministic checks on every
+push/PR without provider credentials:
 
-- 9/9 base pattern harness (live)
-- autological loop
-- 4/4 meta-cognitive
-- 9/9 engineering primitives
-- 5/5 pattern↔engineering integration
+- local harness and engineering checks (`test_offline.py`)
+- pattern↔engineering integration (`test_integration.py`)
+
+The provider-backed suites (`test_live.py`, `test_meta.py`,
+`test_metacognition.py`, and `test_engineering.py`) run only from an explicit
+`workflow_dispatch` with `run_live: true`. The workflow validates the required
+Azure configuration before making calls.
 
 ## Verification
 
