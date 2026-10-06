@@ -1,10 +1,10 @@
 """Live verification of meta-cognitive agent against Azure Foundry."""
-import os, sys, json
-sys.path.insert(0, os.path.dirname(__file__))
-for line in open('/opt/data/.env'):
-    line=line.strip()
-    if '=' in line and not line.startswith('#'):
-        k,v=line.split('=',1); os.environ.setdefault(k,v)
+import json
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT))
 import azure
 from patterns import Trace
 from metacognition import (MetaCognitiveAgent,CognitionBudget,calibrate,inspect_trace,Strategy)

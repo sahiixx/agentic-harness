@@ -1,15 +1,13 @@
 """Live end-to-end test of the agentic harness against Azure Foundry.
 
-This is a real execution test: every pattern makes real model calls.
+This is a real execution test: every pattern makes real model calls. Provider
+configuration is supplied by the caller through environment variables.
 """
-import sys, os
-sys.path.insert(0, '/opt/data/harness')
+import sys
+from pathlib import Path
 
-for line in open('/opt/data/.env'):
-    line = line.strip()
-    if '=' in line and not line.startswith('#'):
-        k, v = line.split('=', 1)
-        os.environ.setdefault(k, v)
+REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT))
 
 import azure
 from patterns import (Envelope, chain, route, parallel, vote, orchestrate,
